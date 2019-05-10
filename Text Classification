@@ -1,0 +1,384 @@
+#Extracting data from a Web Scrapper and performing text classification
+# Importing relevant libraries
+#To scrap data, requests and BeautifulSoup package is used
+#To work with data, pandas and numpy package is used
+#To preprocess data, nltk and re package is used
+#To build predictive models in Python we use a set of libraries that are imported here. In particular sklearn is important.
+#To visualize the comparision, matplotlib package is used.
+#To disable warnings, warnings package is used
+
+import requests
+import pandas as pd
+import numpy as np  
+import re  
+import nltk   
+from bs4 import BeautifulSoup
+from nltk.stem import WordNetLemmatizer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.model_selection import train_test_split  
+from sklearn.ensemble import RandomForestClassifier 
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn import tree
+from sklearn import metrics
+from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import cross_val_score
+from sklearn import ensemble
+from sklearn import linear_model
+from sklearn import neighbors
+from sklearn import neural_network
+import matplotlib.pyplot as plt
+from sklearn.metrics import roc_curve
+from sklearn.metrics import roc_auc_score
+nltk.download('stopwords')  
+nltk.download('wordnet')
+import warnings
+warnings.filterwarnings("ignore")
+
+#Task 1: Scrapping data
+#Scrapping data from 2 categories, extracting only 2 fields- Reviews and ratings
+#Ratings are converted to binary data (Positive and Negative based on numerical rating)
+#The 2 fields are then stored in seperate datasets
+
+#Extracting all links from page - http://mlg.ucd.ie/modules/yalp/
+page = requests.get("http://mlg.ucd.ie/modules/yalp/")
+soup = BeautifulSoup(page.content,'html.parser')
+soup.find_all('a')
+
+#Extracting links for 2 categories -
+#Category A: Hotels and travel (1430 reviews)
+#Category B: Restaurants (1440 reviews)
+#finding only those links which have href values of the 2 categories
+
+categories_links = soup.find_all('a',href = ["hotels_travel_list.html","restaurants_list.html" ])
+new_links = []
+prefix = "http://mlg.ucd.ie/modules/yalp/"
+for link in categories_links:
+  new_links.append(prefix+link["href"])
+print(new_links)
+
+#A function named 'business_list is created to scrap all reviews from each of the business from the categories. *
+#Each category url is passed to the function to retrieve data
+#2 variables are scrapped - Reviews and Rating
+#Rating is converted from numerical values(1-5) to 2 class labels (positive and negative)
+#Variables are returned from the function as dictionary
+
+def business_list(url):
+  page = requests.get(url)
+  business_link = []
+  ratings =[] 
+  review_text =[]
+  
+  soup = BeautifulSoup(page.content,'html.parser')
+  business = soup.find_all('a')
+  for b in business:
+    business_link.append(prefix+b["href"])
+
+  for reviews in business_link:
+    page = requests.get(reviews)
+    soup = BeautifulSoup(page.content,'html.parser')
+    data = soup.find_all("div", {"class": "review"})
+    for v in data:
+      ratings.append('Positive' if int(v.img["alt"][0:1])>3 else 'Negative')
+      z = v.find_all("p", {"class": "text"})
+      review_text.append(z[0].text.strip().replace(","," "))
+      
+  scrapped_data = {'Reviews' : review_text,'Ratings' : ratings }
+  return scrapped_data
+
+#Calling the business_lists function
+#new_links contains the links of both the categories(A and B)
+#Scrapped data for both the categories is stored in different dataframes
+#The generated data is then passed to csv file, so that data can be retrieved directly from the csv as well without the need of scrapping it again. 
+
+Category_A = business_list(new_links[0])
+df1 = pd.DataFrame(Category_A)
+df1.to_csv("Category_A.csv", index = False)
+df1.head()
+
+Category_B = business_list(new_links[1])
+df2 = pd.DataFrame(Category_B)
+df2.to_csv("Category_B.csv", index = False)
+df2.head()
+
+#Reading from csv in Dataframe
+df1 = pd.read_csv("Category_A.csv")
+df2 = pd.read_csv("Category_B.csv")
+df1.head()
+
+#Task 2: Building classifier on the data to predict the class label, by applying appropriate preprocessing steps and evaluating the predictions
+#Applying appropriate pre--processing steps to create numerical representation of data
+#Building a classification model to predict the class label
+#Evaluating the model by testing the predictions
+
+#A Function (preprocessing) is created to apply pre-processing steps to scrapped data
+#Removing special characters
+#Removing single characters
+#Remving single characters from the start
+#Substituting multiple spaces with single space
+#Applying lemmatization by splitting the text
+#Stop words removal and conversion to lower case is done in the next step
+
+def preprocessing(X):
+  documents = []
+  stemmer = WordNetLemmatizer()
+  for sen in range(0, len(X)):  
+    # Remove all the special characters
+    document = re.sub(r'\W', ' ', str(X[sen]))
+    # remove all single characters
+    document = re.sub(r'\s+[a-zA-Z]\s+', ' ', document)
+
+    # Remove single characters from the start
+    document = re.sub(r'\^[a-zA-Z]\s+', ' ', document) 
+
+    # Substituting multiple spaces with single space
+    document = re.sub(r'\s+', ' ', document, flags=re.I)
+    
+    # Lemmatization
+    document = document.split()
+    document = [stemmer.lemmatize(word) for word in document]
+    document = ' '.join(document)
+
+    documents.append(document)
+
+  return documents
+  
+#Using the 2 dataframes, data of both the categories is split into X and Y Above function(preprocessing) is called on X
+ 
+X1,y1 = df1["Reviews"],df1["Ratings"]
+X2,y2 = df2["Reviews"],df2["Ratings"]
+X1 = preprocessing(X1)
+X2 = preprocessing(X2)
+
+y1.replace(["Positive","Negative"],[1,0],inplace=True)
+y2.replace(["Positive","Negative"],[1,0],inplace=True)
+
+X_train_1, X_test_1, y_train_1, y_test_1 = train_test_split(X1, y1, test_size=0.2, random_state=0) 
+X_train_2, X_test_2, y_train_2, y_test_2 = train_test_split(X2, y2, test_size=0.2, random_state=0) 
+
+#Continued pre-processing
+#Reviews (text) is converted to a numerical form using TfidfVectorizer
+#Stop words are removed
+#Min word length to be included in the representation is set to 3 
+
+vectorizer = TfidfVectorizer(stop_words = "english", lowercase=True, min_df = 3)
+X_train_1 = vectorizer.fit_transform(X_train_1).toarray()
+X_test_1 = vectorizer.transform(X_test_1).toarray()
+X_train_2 = vectorizer.fit_transform(X_train_2).toarray()
+X_test_2 = vectorizer.transform(X_test_2).toarray()
+
+#Building simple classification models
+#6 different types of classifiers are used to determine the best model for this dataset
+#For understanding, these models are tested on Category 1 dataset
+#Decision Tree Classifier
+#Random Forest Classifier**
+#Bagging Classifier
+#AdaBoost Classifier
+#Logistic Regression
+#KNeighbors Classifier
+#Neural Networks
+
+decision_tree = tree.DecisionTreeClassifier(criterion="entropy")
+decision_tree.fit(X_train_1,y_train_1)
+
+random_forest = RandomForestClassifier(n_estimators=300, max_features = 3,min_samples_split=200)
+random_forest.fit(X_train_1,y_train_1)
+
+bagging = ensemble.BaggingClassifier(base_estimator = tree.DecisionTreeClassifier(criterion="entropy", min_samples_leaf = 50), n_estimators=10)
+bagging.fit(X_train_1,y_train_1)
+
+ada_boost = ensemble.AdaBoostClassifier(base_estimator = tree.DecisionTreeClassifier(criterion="entropy", min_samples_leaf = 200), n_estimators=10)
+ada_boost.fit(X_train_1,y_train_1)
+
+logistic_regression = linear_model.LogisticRegression()
+logistic_regression.fit(X_train_1,y_train_1)
+
+k_neighbors = neighbors.KNeighborsClassifier()
+k_neighbors.fit(X_train_1,y_train_1)
+
+neural_network = neural_network.MLPClassifier(hidden_layer_sizes=(300, 100))
+neural_network.fit(X_train_1,y_train_1)
+
+#A function(average_category1) is created to evaluating the performance of each type of classifier, accuracies are returned as tuples *
+
+def accuracy_category1(Classifier_name,model):
+  y_pred_1 = model.predict(X_test_1)    
+  accuracy = accuracy_score(y_test_1, y_pred_1)
+  x = (Classifier_name , accuracy)
+  return x 
+  
+accuracy_metrics = []
+accuracy_metrics.append(accuracy_category1("Decision Tree",decision_tree))
+accuracy_metrics.append(accuracy_category1("Random Forest",random_forest))
+accuracy_metrics.append(accuracy_category1("Bagging ",bagging))
+accuracy_metrics.append(accuracy_category1("AdaBoost",ada_boost))
+accuracy_metrics.append(accuracy_category1("Logistic Regression",logistic_regression))
+accuracy_metrics.append(accuracy_category1("K neighbors",k_neighbors))
+accuracy_metrics.append(accuracy_category1("Neural network",neural_network))
+for i in accuracy_metrics:
+  print(i)
+  
+labels, ys = zip(*accuracy_metrics)
+xs = np.arange(len(labels)) 
+width = 0.6
+plt.ylim(0.6,0.9)
+plt.bar(xs, ys, width, align='center')
+plt.xticks(xs, labels, rotation = 'vertical')
+plt.yticks(ys)
+
+#As per the above results Logistic Regression(85%) and Neural Network(87%) gave the best accuracy. *
+#We trained Logistic Regression classifier using data from both the categories
+#For the sake of simplicity we select Logistic Regression and again trained our model by applying k-fold cross validation using both the categories
+
+def evaluation(X_train,y_train,X_test,y_test):
+  logistic_regression = linear_model.LogisticRegression()
+  logistic_regression.fit(X_train,y_train)
+  y_pred = logistic_regression.predict(X_test)    
+  print("Accuracy: ", accuracy_score(y_test, y_pred))
+  print("Classification report: ")
+  print(metrics.classification_report(y_test, y_pred))
+  #Print self-made confusion matrix
+  print("Confusion Matrix")
+  print(pd.crosstab(np.array(y_test), y_pred, rownames=['True'], colnames=['Predicted'], margins=True))
+  y_pred = logistic_regression.predict_proba(X_test)
+  y_pred = y_pred[:, 1]
+  fpr, tpr, thresholds = roc_curve(y_test, y_pred)
+  roc_auc = auc(fpr, tpr)
+  print("Area under curve:", roc_auc)
+  plt.figure(figsize=(10,10))
+  plt.title('Receiver Operating Characteristic')
+  plt.plot(fpr,tpr, color='red',label = 'AUC = %0.2f' % roc_auc)
+  plt.legend(loc = 'lower right')
+  plt.plot([0, 1], [0, 1],linestyle='--')
+  plt.axis('tight')
+  plt.ylabel('True Positive Rate')
+  plt.xlabel('False Positive Rate')
+  
+print("Category A ")
+evaluation(X_train_1,y_train_1,X_test_1,y_test_1)
+print("Category B")
+evaluation(X_train_2,y_train_2,X_test_2,y_test_2)
+
+cross_val_score_category_A = cross_val_score(logistic_regression, X_train_1, y_train_1, cv = 10)
+print("Category_A_score = ", cross_val_score_category_A)
+cross_val_score_category_B = cross_val_score(logistic_regression, X_train_2, y_train_2, cv = 10)
+print("Category_B_score = ", cross_val_score_category_B
+
+#Task 3: Evaluating the performance of classification models between categories
+#Following 4 types of analysis are done:
+#Task 1: First Classifier is trained using training data of Category A and tested using test data of Categort A and Category B**
+#Task 2: Second Classifier is trained using training data of Category A and tested using test data of Categort A and Category B**
+#Task 3: First Classifier is trained using training data of Category A and tested using whole data of Category B
+#Task 4: Second Classifier is trained using training data of Category B and tested using whole data of Categort A *
+#The accuracies are plotted on bar charts to evaluate the performnace on data of different distributions
+
+def data(df):
+  X,y = df["Reviews"],df["Ratings"]
+  X = preprocessing(X)
+  X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=0)
+  return X_train, X_test, y_train, y_test
+
+#Task 1: Training Logistic Regression model on Category 1 and testing on test data of Category A and B
+X_train_1, X_test_1, y_train_1, y_test_1 = data(df1)
+X_train_2, X_test_2, y_train_2, y_test_2 = data(df2)
+X_train_1 = vectorizer.fit_transform(X_train_1).toarray()
+X_test_1 = vectorizer.transform(X_test_1).toarray()
+X_test_2 = vectorizer.transform(X_test_2).toarray()
+#Fitting model
+logistic_regression.fit(X_train_1,y_train_1)
+
+#Evaluating on test data of Category A
+y_pred_1 = logistic_regression.predict(X_test_1)    
+accuracy_A_A = accuracy_score(y_test_1, y_pred_1)
+print("Accuracy when trained in A training set and tested using A test set : ", accuracy_A_A)
+logistic_regression.fit(X_train_1,y_train_1)
+y_pred_2 = logistic_regression.predict(X_test_2)    
+accuracy_A_B = accuracy_score(y_test_2, y_pred_2)
+print("Accuracy when trained in A training set and tested using B test set : ",accuracy_A_B)
+
+Task 2: Evaluating model when training data was from Category B and test data was from category A and B
+X_train_1, X_test_1, y_train_1, y_test_1 = data(df1)
+X_train_2, X_test_2, y_train_2, y_test_2 = data(df2)
+X_train_2 = vectorizer.fit_transform(X_train_2).toarray()
+X_test_1 = vectorizer.transform(X_test_1).toarray()
+X_test_2 = vectorizer.transform(X_test_2).toarray()
+#Fitting the model
+logistic_regression.fit(X_train_2,y_train_2)
+y_pred_2 = logistic_regression.predict(X_test_2)    
+accuracy_B_B = accuracy_score(y_test_2, y_pred_2)
+print("Accuracy when trained in B training set and tested using B test set : ", accuracy_B_B)
+y_pred_1 = logistic_regression.predict(X_test_1)    
+accuracy_B_A = accuracy_score(y_test_1, y_pred_1)
+print("Accuracy when trained in B training set and tested using A test set : ", accuracy_B_A)
+
+#Task 3: Training model on training data of Category A and testing on whole data of Category B
+X_train_1, X_test_1, y_train_1, y_test_1 = data(df1)
+X_train_2, X_test_2, y_train_2, y_test_2 = data(df2)
+X_train_1 = vectorizer.fit_transform(X_train_1).toarray()
+X2,y2 = df2["Reviews"],df2["Ratings"]
+X2 = preprocessing(X2)
+X2 = vectorizer.transform(X2).toarray()
+logistic_regression.fit(X_train_1,y_train_1)
+y_pred_2 = logistic_regression.predict(X2)    
+accuracy_AB = accuracy_score(y2, y_pred_2)
+print("Accuracy when trained in A training set and tested using whole B dataset :", accuracy_AB)
+
+#Task 4: Training model on training data of Category B and testing on whole data of Category A
+X_train_1, X_test_1, y_train_1, y_test_1 = data(df1)
+X_train_2, X_test_2, y_train_2, y_test_2 = data(df2)
+X_train_2 = vectorizer.fit_transform(X_train_2).toarray()
+X1,y1 = df1["Reviews"],df1["Ratings"]
+X1 = preprocessing(X1)
+X1 = vectorizer.transform(X1).toarray()
+logistic_regression.fit(X_train_2,y_train_2)
+y_pred_1 = logistic_regression.predict(X1)    
+accuracy_BA = accuracy_score(y1, y_pred_1)
+print("Accuracy when trained in B training set and tested using whole A dataset :",accuracy_BA)
+
+#Evaluation summary - Comparision between Category A and Category B
+Evaluation_category = ['Category A',' Category B']
+results = [accuracy_A_A,accuracy_A_B]
+plt.bar(Evaluation_category, results, color = 'maroon')
+plt.xlabel('Tested on Categories')
+plt.ylabel('Accuracy')
+plt.title('Model trained on training data of Category A  and tested on test data of Category A and B')
+
+#Results : 85. 66% accuracy was achieved when - **
+#Training data : Category A
+#Test data : Category A
+#In this case, model is trained and tested on data of same distribution
+
+#Results : 83.68% accuracy was achieved when - **
+#Training data : Category A
+#Test data : Category B
+#In this case, model is trained and tested on data of different distributions*
+
+Evaluation_category = ['Category A',' Category B']
+results = [accuracy_B_A,accuracy_B_B]
+plt.bar(Evaluation_category, results, color = 'maroon')
+plt.xlabel('Tested on Categories')
+plt.ylabel('Accuracy')
+plt.title('Model trained on Category B and tested on test data of Category A and B')
+
+#Results : 75.52% accuracy was achieved when - **
+#Training data : Category B
+#Test data : Category A
+#In this case, model is trained and tested on data of different distributions*
+
+#Results : 85. 06% accuracy was achieved when - **
+#Training data : Category B
+#Test data : Category B
+#In this case, model is trained and tested on data of same distribution
+
+#Note: This is an important observation. When model was trained in A and tested in A, B : accuracies were very similar(85% and 83%). One reason for similiar accuracies can be that they most of the words present in Category A were there in Catgory B *
+
+#When model was trained in B and tested in B,A: accuracies varied by a large number (85% and 75%) One reason for different accuracies can be that some of the words which are there in Category A were not present in Category B, hence the model was not trained on those words which gave low accuracy
+
+Evaluation_category = [' Category A(Trained) B(Tested)','Category B(Trained) A(Tested)']
+results = [accuracy_AB, accuracy_BA]
+plt.bar(Evaluation_category, results, color = 'maroon')
+plt.xlabel('Tested on Categories')
+plt.ylabel('Accuracy')
+plt.title('Model trained')
+
+#With the above graph, it is clear that the model transfers well between the categories *We achieved an accuracy of 80% in both the cases (When model was trained in A and tested in B and when model was trained in B and tested in A *
+
